@@ -15,27 +15,27 @@
         padding: 0;
         overflow: hidden;
       }
+
       html,
       body {
         position: fixed;
         inset: 0;
         background: #231f20;
       }
+
       #gameContainer {
         position: absolute;
         inset: 0;
         background: #231f20;
       }
+
       #gameContainer canvas {
-        position: absolute !important;
-        inset: 0;
         display: block;
         width: 100% !important;
         height: 100% !important;
-        max-width: none !important;
-        max-height: none !important;
         border: 0;
       }
+
       #loadError {
         position: fixed;
         z-index: 10;
@@ -53,153 +53,32 @@
   <body>
     <div id="gameContainer"></div>
     <script>
-      // Serve all Unity assets from this repository, so StackBlitz does not
-      // depend on a separate CDN copy of the build.
-      const baseUrl = new URL("./", document.baseURI).href;
-      const splits = { "Build/WebGL-Release.data.unityweb": 6 };
-
-      function showLoadError(error) {
-        console.error("Unity WebGL startup error:", error);
+      function showLoadError(message) {
+        console.error("Unity WebGL startup error:", message);
         const panel = document.createElement("pre");
         panel.id = "loadError";
-        panel.textContent = "Unity WebGL startup error: " + error;
+        panel.textContent = "Unity WebGL startup error: " + message;
         document.body.appendChild(panel);
       }
 
-      async function prepareSplitAssets() {
-        const chunkGroups = {};
-        const requests = [];
-
-        for (const key in splits) {
-          chunkGroups[key] = new Array(splits[key]);
-          const prefix = key.replace(".unityweb", "");
-          for (let i = 0; i < splits[key]; i++) {
-            requests.push({
-              key,
-              index: i,
-              url: new URL(prefix + String(i).padStart(2, "0"), baseUrl).href,
-            });
-          }
-        }
-
-        await Promise.all(
-          requests.map(async ({ key, index, url }) => {
-            const response = await fetch(url);
-            if (!response.ok) {
-              throw new Error("Could not load split data chunk (" + response.status + "): " + url);
-            }
-            chunkGroups[key][index] = new Uint8Array(await response.arrayBuffer());
-          }),
-        );
-
-        const assetCache = {};
-        for (const key in chunkGroups) {
-          const parts = chunkGroups[key];
-          const totalLength = parts.reduce((total, part) => total + part.length, 0);
-          const merged = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const part of parts) {
-            merged.set(part, offset);
-            offset += part.length;
-          }
-          assetCache[key] = merged;
-          assetCache[key.split("/").pop()] = merged;
-        }
-
-        const originalFetch = window.fetch.bind(window);
-        window.fetch = function (input, init) {
-          const url = typeof input === "string" ? input : input?.url || "";
-          for (const key in assetCache) {
-            if (url.includes(key)) {
-              return Promise.resolve(
-                new Response(assetCache[key].slice(), {
-                  status: 200,
-                  headers: { "Content-Type": "application/octet-stream" },
-                }),
-              );
-            }
-          }
-          return originalFetch(input, init);
-        };
-
-        const originalOpen = XMLHttpRequest.prototype.open;
-        const originalSend = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.open = function (method, url) {
-          this._unityAssetUrl = url;
-          return originalOpen.apply(this, arguments);
-        };
-        XMLHttpRequest.prototype.send = function () {
-          let match = null;
-          for (const key in assetCache) {
-            if ((this._unityAssetUrl || "").includes(key)) {
-              match = key;
-              break;
-            }
-          }
-          if (!match) return originalSend.apply(this, arguments);
-
-          const xhr = this;
-          const data = assetCache[match];
-          setTimeout(() => {
-            Object.defineProperty(xhr, "status", { configurable: true, value: 200 });
-            Object.defineProperty(xhr, "statusText", { configurable: true, value: "OK" });
-            Object.defineProperty(xhr, "readyState", { configurable: true, value: 4 });
-            Object.defineProperty(xhr, "response", {
-              configurable: true,
-              get: () => data.slice().buffer,
-            });
-            Object.defineProperty(xhr, "responseText", {
-              configurable: true,
-              get: () => "",
-            });
-            Object.defineProperty(xhr, "responseURL", {
-              configurable: true,
-              value: xhr._unityAssetUrl,
-            });
-            xhr.dispatchEvent(new Event("readystatechange"));
-            xhr.dispatchEvent(new ProgressEvent("progress", {
-              lengthComputable: true,
-              loaded: data.length,
-              total: data.length,
-            }));
-            xhr.dispatchEvent(new ProgressEvent("load", {
-              lengthComputable: true,
-              loaded: data.length,
-              total: data.length,
-            }));
-            xhr.dispatchEvent(new ProgressEvent("loadend"));
-          }, 0);
-        };
-      }
-
-      async function startGame() {
+      const loader = document.createElement("script");
+      loader.src = "./Build/UnityLoader.js";
+      loader.onerror = () => showLoadError("Could not load Build/UnityLoader.js.");
+      loader.onload = () => {
         try {
-          await prepareSplitAssets();
-          const loader = document.createElement("script");
-          loader.src = new URL("Build/UnityLoader.js", baseUrl).href;
-          loader.onerror = () => showLoadError("Could not load Build/UnityLoader.js from this repository.");
-          loader.onload = () => {
-            try {
-              window.gameInstance = UnityLoader.instantiate(
-                "gameContainer",
-                new URL("Build/WebGL-Release.json", baseUrl).href,
-                {},
-              );
-            } catch (error) {
-              showLoadError(error?.message || String(error));
-            }
-          };
-          document.body.appendChild(loader);
+          window.gameInstance = UnityLoader.instantiate(
+            "gameContainer",
+            "./Build/WebGL-Release.json",
+            {},
+          );
         } catch (error) {
           showLoadError(error?.message || String(error));
         }
-      }
-
-      startGame();
+      };
+      document.body.appendChild(loader);
 
       const gameContainer = document.getElementById("gameContainer");
       new ResizeObserver(() => window.dispatchEvent(new Event("resize"))).observe(gameContainer);
-      window.addEventListener("resize", () => window.dispatchEvent(new Event("resize")));
     </script>
   </body>
 </html>
